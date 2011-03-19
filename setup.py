@@ -10,6 +10,9 @@ setup(
         "zope.component",
         "argparse",
         "venusian",
+        "execnet",
+        "py",
+        "pytest",
     ],
     entry_points={
         "console_scripts":[

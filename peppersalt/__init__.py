@@ -4,15 +4,58 @@ import pkg_resources
 import functools
 from argparse import ArgumentParser
 import venusian
-from zope.interface import Interface
-from zope.component import registry
+import inspect
+from zope.interface import Interface, Attribute, implements
+from zope.component import registry, adapts
+
+class MyNamespace(dict):
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __getattr__(self, key):
+        return self[key]
+
+class IFuncTask(Interface):
+    """ function task marker """
 
 class ITask(Interface):
     """ peppersalt task marker """
+    args = Attribute(u"argments")
+
     def __call__(*args, **kwargs):
         """ execute task """
 
-parser = ArgumentParser()
+class FuncTask(object):
+    adapts = (IFuncTask,)
+    implements(ITask)
+    def __init__(self, func):
+        self.func = func
+        self.args, self.varargs, self.varkw, self.defaults = inspect.getargspec(self.func)
+        if self.defaults is None:
+            self.defaults = {}
+        else:
+            self.defaults = dict(zip(self.args, self.defaults))
+
+    def __call__(self, *args, **kwargs):
+        kwargs = dict([(k, v) for k, v in kwargs.iteritems() if k in self.args])
+        return self.func(*args, **kwargs)
+
+    def __repr__(self):
+        return "<FuncTask %s>" % self.func.__name__
+
+    def help(self):
+        return self.func.__doc__.split('\n')[0] if self.func.__doc__ else 'no help'
+    def description(self):
+        return self.func.__doc__ or 'no help'
+
+    def has_default(self, argname):
+        return argname in self.defaults
+
+    def get_default(self, argname):
+        return self.defaults.get(argname)
+
+        
+
 ENTRY_POINT_NAME = 'peppersalt.tasks'
 
 def get_project_custer():
@@ -27,7 +70,7 @@ def get_plugins():
 def task(func):
     """ task registry """
     def callback(scanner, name, ob):
-        scanner.registry.registerUtility(ob, ITask, name)
+        scanner.registry.registerUtility(FuncTask(ob), ITask, name)
     venusian.attach(func, callback)
     return func
 
@@ -41,11 +84,17 @@ def scan_custers():
     return task_registry
 
 def main():
-    print "peppersalt"
-    args = parser.parse_args()
-    print args
-    print parser
-
+    parser = ArgumentParser()
     registry = scan_custers()
+    subparsers = parser.add_subparsers()
     for name, task in registry.getUtilitiesFor(ITask):
-        print name, task.__doc__
+        subparser = subparsers.add_parser(name, help=task.help())
+        for arg in task.args:
+            if task.has_default(arg):
+                subparser.add_argument('--' + arg, default=task.get_default(arg))
+            else:
+                subparser.add_argument(arg)
+        subparser.set_defaults(task=task)
+    args = parser.parse_args(namespace=MyNamespace())
+    if args.task:
+        args.task(**args)
